@@ -12,6 +12,8 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import java.net.HttpURLConnection
+import java.net.URL
 
 class FloatingService : Service() {
     private var windowManager: WindowManager? = null
@@ -27,20 +29,40 @@ class FloatingService : Service() {
         val channelId = "aashis_bot_service"
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
-            NotificationChannel(
-                channelId,
-                "AASHIS BOT",
-                NotificationManager.IMPORTANCE_LOW
-            )
+            NotificationChannel(channelId, "AASHIS BOT", NotificationManager.IMPORTANCE_LOW)
         )
-
         val notification = Notification.Builder(this, channelId)
             .setContentTitle("AASHIS BOT")
             .setContentText("Floating control is active")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .build()
-
         startForeground(1, notification)
+    }
+
+    private fun sendCommand(command: String) {
+        Thread {
+            var message = "Connection failed. Is Python server running?"
+            try {
+                val connection = URL("http://127.0.0.1:8765/$command")
+                    .openConnection() as HttpURLConnection
+                connection.requestMethod = "POST"
+                connection.connectTimeout = 3000
+                connection.readTimeout = 3000
+                val response = connection.responseCode
+                message = if (response == 200) {
+                    connection.inputStream.bufferedReader().use { it.readText() }
+                } else {
+                    "Server error: $response"
+                }
+                connection.disconnect()
+            } catch (e: Exception) {
+                message = "Connection failed: ${e.message}"
+            }
+            val result = message
+            android.os.Handler(mainLooper).post {
+                Toast.makeText(this, result, Toast.LENGTH_SHORT).show()
+            }
+        }.start()
     }
 
     private fun showFloatingPanel() {
@@ -49,7 +71,7 @@ class FloatingService : Service() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(14, 10, 14, 10)
+            setPadding(12, 8, 12, 8)
             setBackgroundColor(Color.rgb(25, 25, 25))
         }
 
@@ -60,25 +82,35 @@ class FloatingService : Service() {
             gravity = Gravity.CENTER
         }
 
-        val start = TextView(this).apply {
-            text = "START"
-            textSize = 15f
+        val controls = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
-            setPadding(18, 10, 18, 10)
-            setBackgroundColor(Color.rgb(20, 130, 70))
-            setOnClickListener {
-                text = "STARTED"
-                Toast.makeText(
-                    this@FloatingService,
-                    "AI engine connection is not ready yet",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
         }
 
+        val start = TextView(this).apply {
+            text = "START"
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setPadding(14, 10, 14, 10)
+            setBackgroundColor(Color.rgb(20, 130, 70))
+            setOnClickListener { sendCommand("start") }
+        }
+
+        val stop = TextView(this).apply {
+            text = "STOP"
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setPadding(14, 10, 14, 10)
+            setBackgroundColor(Color.rgb(180, 40, 40))
+            setOnClickListener { sendCommand("stop") }
+        }
+
+        controls.addView(start)
+        controls.addView(stop)
         box.addView(title)
-        box.addView(start)
+        box.addView(controls)
         panel = box
 
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)

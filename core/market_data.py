@@ -1,48 +1,94 @@
 import os
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
+from core.candles import validate_candle
+
+API_URL = "https://api.twelvedata.com/time_series"
+
+INTERVAL_SECONDS = {
+    "1min": 60,
+    "5min": 300,
+    "15min": 900,
+    "30min": 1800,
+    "1h": 3600,
+    "4h": 14400,
+    "1day": 86400,
+}
 
 
 def get_candles(symbol="EUR/USD", interval="1min", limit=100):
     api_key = os.getenv("AASHIS_API_KEY")
 
     if not api_key:
-        raise RuntimeError("Twelve Data API key not set")
+        raise RuntimeError("AASHIS_API_KEY is not set")
 
-    url = "https://api.twelvedata.com/time_series"
+    if interval not in INTERVAL_SECONDS:
+        raise ValueError(f"Unsupported interval: {interval}")
+
+    if not isinstance(limit, int) or not 30 <= limit <= 5000:
+        raise ValueError("limit must be between 30 and 5000")
+
     params = {
         "symbol": symbol,
         "interval": interval,
         "outputsize": limit,
         "order": "ASC",
-        "apikey": api_key
+        "timezone": "UTC",
+        "apikey": api_key,
     }
 
-    response = requests.get(url, params=params, timeout=15)
+    response = requests.get(API_URL, params=params, timeout=20)
     response.raise_for_status()
     data = response.json()
 
     if data.get("status") == "error" or "values" not in data:
-        raise RuntimeError(data.get("message", "Market data unavailable"))
+        message = data.get("message", "Market data unavailable")
+        raise RuntimeError(message)
 
-    candles = []
+    now = datetime.now(timezone.utc)
+    duration = timedelta(seconds=INTERVAL_SECONDS[interval])
+    candles_by_time = {}
+
     for item in data["values"]:
-        candles.append({
-            "time": item["datetime"],
-            "open": float(item["open"]),
-            "high": float(item["high"]),
-            "low": float(item["low"]),
-            "close": float(item["close"])
-        })
+        try:
+            timestamp = datetime.fromisoformat(
+                item["datetime"].replace("Z", "+00:00")
+            )
 
-    # अन्तिम candle पूरा बन्द भएको नहुन सक्छ।
-    if candles:
-        last_time = datetime.strptime(
-            candles[-1]["time"], "%Y-%m-%d %H:%M:%S"
-        ).replace(tzinfo=timezone.utc)
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=timezone.utc)
+            else:
+                timestamp = timestamp.astimezone(timezone.utc)
 
-        now = datetime.now(timezone.utc)
-        if (now - last_time).total_seconds() < 60:
-            candles.pop()
+            candle = {
+                "time": timestamp.isoformat(),
+                "open": float(item["open"]),
+                "high": float(item["high"]),
+                "low": float(item["low"]),
+                "close": float(item["close"]),
+            }
 
-    return candles
+            if not validate_candle(candle):
+                continue
+
+            # Do not use a candle until its full interval has closed.
+            if timestamp + duration > now:
+                continue
+
+            candles_by_time[candle["time"]] = candle
+
+        except (KeyError, TypeError, ValueError):
+            continue
+
+    candles = sorted(
+        candles_by_time.values(),
+        key=lambda candle: candle["time"]
+    )
+
+    if len(candles) < 30:
+        raise RuntimeError(
+            f"Only {len(candles)} valid closed candles received"
+        )
+
+    return candles[-limit:]

@@ -1,17 +1,4 @@
-def candle_info(c):
-    o, h, l, close = map(float, (c["open"], c["high"], c["low"], c["close"]))
-    size = max(h - l, 1e-12)
-    body = abs(close - o)
-    upper = h - max(o, close)
-    lower = min(o, close) - l
-    return {
-        "bull": close > o,
-        "bear": close < o,
-        "body": body / size,
-        "upper": upper / size,
-        "lower": lower / size,
-        "range": size,
-    }
+from core.candles import analyze_candle
 
 
 def detect_patterns(candles):
@@ -19,29 +6,59 @@ def detect_patterns(candles):
         return []
 
     a, b, c = candles[-3:]
-    A, B, C = map(candle_info, (a, b, c))
+    A, B, C = map(analyze_candle, (a, b, c))
     patterns = []
 
-    # Single-candle patterns
-    if C["body"] <= 0.10:
+    # Single candle patterns
+    if C["body_ratio"] <= 0.10:
         patterns.append(("Doji", "neutral"))
-    if C["lower"] >= 0.60 and C["body"] <= 0.35 and C["upper"] <= 0.15:
-        patterns.append(("Hammer", "bullish"))
-    if C["upper"] >= 0.60 and C["body"] <= 0.35 and C["lower"] <= 0.15:
-        patterns.append(("Shooting Star", "bearish"))
-    if C["body"] >= 0.85:
-        patterns.append(("Marubozu Bullish" if C["bull"] else "Marubozu Bearish", "bullish" if C["bull"] else "bearish"))
 
-    # Two-candle patterns
-    if B["bear"] and C["bull"] and c["open"] <= b["close"] and c["close"] >= b["open"]:
+    if (C["lower_wick_ratio"] >= 0.60
+            and C["body_ratio"] <= 0.35
+            and C["upper_wick_ratio"] <= 0.15):
+        patterns.append(("Hammer", "bullish"))
+
+    if (C["upper_wick_ratio"] >= 0.60
+            and C["body_ratio"] <= 0.35
+            and C["lower_wick_ratio"] <= 0.15):
+        patterns.append(("Shooting Star", "bearish"))
+
+    if C["body_ratio"] >= 0.85:
+        direction = C["direction"]
+        if direction != "DOJI":
+            patterns.append((
+                "Marubozu " + direction.title(),
+                direction.lower()
+            ))
+
+    # Two candle patterns
+    if (B["direction"] == "BEARISH"
+            and C["direction"] == "BULLISH"
+            and float(c["open"]) <= float(b["close"])
+            and float(c["close"]) >= float(b["open"])):
         patterns.append(("Bullish Engulfing", "bullish"))
-    if B["bull"] and C["bear"] and c["open"] >= b["close"] and c["close"] <= b["open"]:
+
+    if (B["direction"] == "BULLISH"
+            and C["direction"] == "BEARISH"
+            and float(c["open"]) >= float(b["close"])
+            and float(c["close"]) <= float(b["open"])):
         patterns.append(("Bearish Engulfing", "bearish"))
 
-    # Three-candle patterns
-    if A["bear"] and B["body"] < 0.35 and C["bull"] and c["close"] > (a["open"] + a["close"]) / 2:
+    # Three candle patterns
+    midpoint_a = (
+        float(a["open"]) + float(a["close"])
+    ) / 2
+
+    if (A["direction"] == "BEARISH"
+            and B["body_ratio"] < 0.35
+            and C["direction"] == "BULLISH"
+            and float(c["close"]) > midpoint_a):
         patterns.append(("Morning Star", "bullish"))
-    if A["bull"] and B["body"] < 0.35 and C["bear"] and c["close"] < (a["open"] + a["close"]) / 2:
+
+    if (A["direction"] == "BULLISH"
+            and B["body_ratio"] < 0.35
+            and C["direction"] == "BEARISH"
+            and float(c["close"]) < midpoint_a):
         patterns.append(("Evening Star", "bearish"))
 
     return patterns
